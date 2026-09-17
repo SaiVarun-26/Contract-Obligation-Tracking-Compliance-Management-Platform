@@ -32,3 +32,12 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserAssignee(BaseModel):
+    id: int
+    full_name: str
+    role: str
+
+    class Config:
+        from_attributes = True

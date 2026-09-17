@@ -7,12 +7,13 @@ import {
   FileCheck2,
   FileText,
   Gauge,
+  LogOut,
   RefreshCw,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Sidebar,
@@ -30,6 +31,18 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/lib/auth/auth-context";
+import { hasPermission, normalizeRole, type Permission } from "@/lib/auth/permissions";
+import { LogoutDialog } from "@/components/auth/logout-dialog";
 
 type NavItem = {
   title: string;
@@ -47,6 +60,7 @@ type NavItem = {
     | "/settings";
   icon: LucideIcon;
   badge?: string;
+  permission?: Permission;
 };
 
 const workspaceItems: NavItem[] = [
@@ -55,24 +69,29 @@ const workspaceItems: NavItem[] = [
   { title: "Obligations", to: "/obligations", icon: FileCheck2 },
   { title: "Renewals", to: "/renewals", icon: RefreshCw },
   { title: "Compliance", to: "/compliance", icon: ShieldCheck },
-  { title: "Reports", to: "/reports", icon: ChartNoAxesCombined },
+  { title: "Reports", to: "/reports", icon: ChartNoAxesCombined, permission: "reports:view" },
 ];
 
 const systemItems: NavItem[] = [
   { title: "Notifications", to: "/notifications", icon: Bell, badge: "12" },
-  { title: "Activity Logs", to: "/activity-logs", icon: Activity },
-  { title: "Users", to: "/users", icon: SlidersHorizontal },
+  { title: "Activity Logs", to: "/activity-logs", icon: Activity, permission: "activities:view" },
+  { title: "Users", to: "/users", icon: SlidersHorizontal, permission: "users:manage" },
   { title: "Profile", to: "/profile", icon: CircleUserRound },
   { title: "Settings", to: "/settings", icon: Settings },
 ];
 
 function LedgerSidebar() {
+  const { user } = useAuth();
+  const userRole = user?.role;
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
 
+  const filterPermitted = (items: NavItem[]) =>
+    items.filter((item) => !item.permission || hasPermission(userRole, item.permission));
+
   const renderItems = (items: NavItem[]) =>
-    items.map((item) => (
+    filterPermitted(items).map((item) => (
       <SidebarMenuItem key={item.to}>
         <SidebarMenuButton asChild isActive={pathname === item.to} tooltip={item.title}>
           <Link to={item.to}>
@@ -93,7 +112,7 @@ function LedgerSidebar() {
           </span>
           <span className="min-w-0 leading-tight group-data-[collapsible=icon]:hidden">
             <span className="block truncate font-display text-sm font-semibold text-sidebar-foreground">
-              Vantage Ledger
+              ContractIQ
             </span>
             <span className="block text-[10px] uppercase tracking-[0.18em] text-sidebar-foreground/40">
               CLM Console
@@ -115,15 +134,90 @@ function LedgerSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-3">
+      <SidebarFooter className="p-3 space-y-2">
         <div className="rounded-md border border-sidebar-border px-3 py-2.5 group-data-[collapsible=icon]:hidden">
           <p className="font-display text-[11px] font-semibold text-sidebar-foreground">
             All systems nominal
           </p>
-          <p className="text-[11px] text-sidebar-foreground/40">Last sync 08:42 UTC</p>
+          <p className="text-[11px] text-sidebar-foreground/40">Role: {normalizeRole(userRole)}</p>
         </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <LogoutDialog
+              trigger={
+                <SidebarMenuButton
+                  className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive cursor-pointer transition-colors"
+                  tooltip="Log Out"
+                >
+                  <LogOut className="size-4" />
+                  <span>Log Out</span>
+                </SidebarMenuButton>
+              }
+            />
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+function UserMenu() {
+  const { user } = useAuth();
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const currentRole = user?.role ? normalizeRole(user.role) : "Viewer";
+  const initials = user?.email ? user.email.slice(0, 2).toUpperCase() : "IQ";
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            className="flex items-center gap-2 rounded-full p-0.5 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+            aria-label="User profile menu"
+          >
+            <span className="hidden sm:inline-block text-xs font-medium text-foreground px-2 py-0.5 rounded-full bg-secondary border border-border">
+              {currentRole}
+            </span>
+            <span className="grid size-8 place-items-center rounded-full bg-jade/10 font-display font-semibold text-jade border border-jade/20">
+              {initials}
+            </span>
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel className="font-normal">
+            <div className="flex flex-col space-y-1">
+              <p className="text-sm font-medium leading-none truncate">{user?.email ?? "User"}</p>
+              <p className="text-xs leading-none text-muted-foreground">{currentRole}</p>
+            </div>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem asChild>
+            <Link to="/profile" className="flex items-center gap-2 cursor-pointer">
+              <CircleUserRound className="size-4" />
+              <span>Profile</span>
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link to="/settings" className="flex items-center gap-2 cursor-pointer">
+              <Settings className="size-4" />
+              <span>Settings</span>
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={(e) => {
+              e.preventDefault();
+              setLogoutOpen(true);
+            }}
+            className="text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer flex items-center gap-2"
+          >
+            <LogOut className="size-4" />
+            <span>Log Out</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <LogoutDialog open={logoutOpen} onOpenChange={setLogoutOpen} />
+    </>
   );
 }
 
@@ -134,12 +228,22 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="min-w-0 flex-1 bg-background">
         <header className="sticky top-0 z-20 flex h-14 items-center border-b border-border/70 bg-background/90 px-4 backdrop-blur-md">
           <SidebarTrigger aria-label="Collapse navigation" />
-          <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
             <SlidersHorizontal className="size-4" />
-            <span className="hidden sm:inline">Legal Operations</span>
-            <span className="ml-2 grid size-8 place-items-center rounded-full bg-jade/10 font-display font-semibold text-jade">
-              AR
-            </span>
+            <UserMenu />
+            <LogoutDialog
+              trigger={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                  title="Log Out"
+                  aria-label="Log Out"
+                >
+                  <LogOut className="size-4" />
+                </Button>
+              }
+            />
           </div>
         </header>
         {children}

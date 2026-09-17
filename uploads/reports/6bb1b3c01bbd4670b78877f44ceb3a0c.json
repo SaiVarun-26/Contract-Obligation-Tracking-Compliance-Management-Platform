@@ -1,0 +1,159 @@
+{
+  "report_type": "Compliance Report",
+  "records": [
+    {
+      "contract_id": 2,
+      "title": "Microsoft Service Agreement",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 3,
+      "title": "Netflix Licensing Agreement",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 4,
+      "title": "YouTube Premium Licensing Agreement",
+      "compliance_score": 0,
+      "status": "Non-Compliant",
+      "risk_level": "High",
+      "total_obligations": 1,
+      "completed": 0,
+      "pending": 1,
+      "overdue": 0
+    },
+    {
+      "contract_id": 5,
+      "title": "Employee Service Agreement",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 1,
+      "completed": 1,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 6,
+      "title": "Auth flow probe",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 7,
+      "title": "Protected flow verification",
+      "compliance_score": 0,
+      "status": "Non-Compliant",
+      "risk_level": "High",
+      "total_obligations": 1,
+      "completed": 0,
+      "pending": 1,
+      "overdue": 0
+    },
+    {
+      "contract_id": 8,
+      "title": "Claude",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 10,
+      "title": "abc",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 11,
+      "title": "Admin Contract",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 12,
+      "title": "Legal Contract",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 14,
+      "title": "Admin Contract",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 15,
+      "title": "Legal Contract",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 17,
+      "title": "Admin Contract",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    },
+    {
+      "contract_id": 18,
+      "title": "Legal Contract",
+      "compliance_score": 100,
+      "status": "Compliant",
+      "risk_level": "Low",
+      "total_obligations": 0,
+      "completed": 0,
+      "pending": 0,
+      "overdue": 0
+    }
+  ]
+}

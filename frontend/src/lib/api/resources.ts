@@ -57,11 +57,79 @@ export const notifications = {
     apiClient.patch<Notification>(`/notifications/${id}/read`).then((r) => r.data),
   delete: (id: number) => apiClient.delete(`/notifications/${id}`),
 };
-export const reports = resource<Report>("/reports", "/reports/");
-export const activities = resource<ActivityLog>("/activities", "/activities/");
+export const reports = {
+  ...resource<Report>("/reports", "/reports/"),
+  generate: (data: { report_type: string; file_format: "pdf" | "excel"; report_name?: string }) =>
+    apiClient.post<Report>("/reports/generate", data).then((r) => r.data),
+  delete: (id: number) => apiClient.delete(`/reports/${id}`).then((r) => r.data),
+};
+
+export interface ActivityFilterParams {
+  page?: number;
+  page_size?: number;
+  action?: string;
+  status?: string;
+  user_id?: number;
+  role?: string;
+  entity_type?: string;
+  contract_id?: number;
+  start_date?: string;
+  end_date?: string;
+  search?: string;
+  order?: "asc" | "desc";
+}
+
+export const activities = {
+  ...resource<ActivityLog>("/activities", "/activities/"),
+  list: async (params?: ActivityFilterParams) => {
+    const res = await apiClient.get<import("./types").ActivityListResponse | ActivityLog[]>("/activities", { params });
+    if (Array.isArray(res.data)) {
+      return res.data;
+    }
+    return res.data?.items || [];
+  },
+  listPaginated: async (params?: ActivityFilterParams) => {
+    const res = await apiClient.get<import("./types").ActivityListResponse>("/activities", { params });
+    return res.data;
+  },
+  downloadExport: async (format: "csv" | "excel" | "pdf", params?: ActivityFilterParams, fallbackFilename?: string) => {
+    const response = await apiClient.get(`/activities/export/${format}`, {
+      params,
+      responseType: "blob",
+    });
+    const blob = new Blob([response.data], {
+      type: response.headers["content-type"] || "application/octet-stream",
+    });
+    const url = URL.createObjectURL(blob);
+    let filename = fallbackFilename;
+    const disposition = response.headers["content-disposition"];
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      if (match?.[1]) filename = match[1];
+    }
+    if (!filename) {
+      const ext = format === "excel" ? "xlsx" : format;
+      filename = `activity_logs_${new Date().toISOString().slice(0, 10)}.${ext}`;
+    }
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    return filename;
+  },
+  delete: (id: number) => apiClient.delete(`/activities/${id}`),
+};
+
+export const auth = {
+  logout: () => apiClient.post("/auth/logout").then((r) => r.data).catch(() => {}),
+};
 export const auditLogs = resource<AuditLog>("/audit-logs", "/audit-logs/");
 export const users = {
   ...resource<User>("/users", "/users/"),
+  assignees: () => apiClient.get<import("./types").UserAssignee[]>("/users/assignees").then((r) => r.data),
   delete: (id: number) => apiClient.delete(`/users/${id}`),
 };
 export const compliance = {
@@ -75,8 +143,27 @@ export const compliance = {
   timeline: () => apiClient.get<ComplianceTimeline[]>("/compliance/timeline").then((r) => r.data),
 };
 export const reportFiles = {
-  download: async (id: number) => {
-    const response = await apiClient.get(`/reports/${id}/download`, { responseType: "blob" });
-    return URL.createObjectURL(response.data);
+  download: async (id: number, fallbackName?: string) => {
+    const response = await apiClient.get(`/reports/${id}/download`, {
+      responseType: "blob",
+    });
+    const blob = new Blob([response.data], {
+      type: response.headers["content-type"] || "application/octet-stream",
+    });
+    const url = URL.createObjectURL(blob);
+    let filename = fallbackName;
+    const disposition = response.headers["content-disposition"];
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      if (match?.[1]) filename = match[1];
+    }
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename || `report_${id}`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    return filename;
   },
 };

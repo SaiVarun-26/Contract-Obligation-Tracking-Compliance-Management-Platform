@@ -82,10 +82,39 @@ export type Report = {
   report_name: string;
   report_type: string;
   file_path: string;
-  generated_by: number;
+  file_format: string;
+  status: string;
+  download_count: number;
+  generated_at?: string | null;
+  generated_by: number | null;
+  generated_by_name?: string | null;
 };
-export type ActivityLog = { id: number; user_id: number; contract_id: number; activity: string };
-export type ActivityLog = { id: number; user_id: number; contract_id: number; activity: string; created_at?: string | null };
+export type ActivityLog = {
+  id: number;
+  timestamp: string;
+  created_at?: string | null;
+  user_id?: number | null;
+  user_name?: string | null;
+  user_role?: string | null;
+  action: string;
+  entity_type?: string | null;
+  entity_id?: number | null;
+  contract_id?: number | null;
+  description: string;
+  activity?: string | null;
+  ip_address?: string | null;
+  status: string;
+  metadata?: Record<string, unknown> | null;
+};
+
+export type ActivityListResponse = {
+  items: ActivityLog[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+};
+export type UserAssignee = { id: number; full_name: string; role: string };
 export type AuditLog = {
   id: number;
   user_id: number;

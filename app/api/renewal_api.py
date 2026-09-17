@@ -1,5 +1,5 @@
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
@@ -13,6 +13,8 @@ from app.schemas.renewal_schema import (
     RenewalResponse
 )
 from app.core.auth import get_current_user
+from app.core.role_checker import require_role, require_any_role
+from app.services.activity_logger import ActivityLogger
 
 
 router = APIRouter(
@@ -30,7 +32,8 @@ router = APIRouter(
 )
 def create_renewal(
     renewal_data: RenewalCreate,
-    current_user=Depends(get_current_user),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager", "Contract Manager")),
     db: Session = Depends(get_db)
 ):
     contract = db.query(Contract).filter(
@@ -73,7 +76,25 @@ def create_renewal(
     db.commit()
     db.refresh(renewal)
 
+    ActivityLogger.log(
+        db=db,
+        action="CREATE_RENEWAL",
+        description=f"Scheduled renewal for contract '{contract.title}' on {renewal.renewal_date}",
+        user=current_user,
+        entity_type="Renewal",
+        entity_id=renewal.id,
+        contract_id=renewal.contract_id,
+        request=request,
+        metadata={
+            "renewal_date": str(renewal.renewal_date),
+            "previous_expiry_date": str(renewal.previous_expiry_date),
+            "new_expiry_date": str(renewal.new_expiry_date),
+        },
+    )
+
     return renewal
+
+
 # ---------------- GET ALL RENEWALS ----------------
 
 @router.get(
@@ -110,6 +131,7 @@ def get_renewal(
 
     return renewal
 
+
 # ---------------- GET RENEWALS FOR A CONTRACT ----------------
 
 @router.get(
@@ -131,11 +153,10 @@ def get_contract_renewals(
             detail="Contract not found"
         )
 
-    renewals = db.query(Renewal).filter(
+    return db.query(Renewal).filter(
         Renewal.contract_id == contract_id
     ).all()
 
-    return renewals
 
 # ---------------- UPDATE RENEWAL ----------------
 
@@ -146,7 +167,8 @@ def get_contract_renewals(
 def update_renewal(
     renewal_id: int,
     renewal_data: RenewalUpdate,
-    current_user=Depends(get_current_user),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager", "Contract Manager")),
     db: Session = Depends(get_db)
 ):
     renewal = db.query(Renewal).filter(
@@ -172,11 +194,10 @@ def update_renewal(
                 detail="Assigned user not found"
             )
 
-    if (
-        "new_expiry_date" in update_data
-        and "renewal_date" in update_data
-        and update_data["new_expiry_date"] <= update_data["renewal_date"]
-    ):
+    renewal_date = update_data.get("renewal_date", renewal.renewal_date)
+    new_expiry_date = update_data.get("new_expiry_date", renewal.new_expiry_date)
+
+    if new_expiry_date <= renewal_date:
         raise HTTPException(
             status_code=400,
             detail="New expiry date must be after renewal date"
@@ -188,9 +209,21 @@ def update_renewal(
     db.commit()
     db.refresh(renewal)
 
+    ActivityLogger.log(
+        db=db,
+        action="UPDATE_RENEWAL",
+        description=f"Updated renewal #{renewal.id} on contract #{renewal.contract_id}",
+        user=current_user,
+        entity_type="Renewal",
+        entity_id=renewal.id,
+        contract_id=renewal.contract_id,
+        request=request,
+    )
+
     return renewal
 
-# ---------------- UPDATE RENEWAL STATUS ----------------
+
+# ---------------- UPDATE STATUS ----------------
 
 @router.patch(
     "/{renewal_id}/status",
@@ -199,7 +232,8 @@ def update_renewal(
 def update_renewal_status(
     renewal_id: int,
     status_data: RenewalStatusUpdate,
-    current_user=Depends(get_current_user),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager", "Contract Manager")),
     db: Session = Depends(get_db)
 ):
     renewal = db.query(Renewal).filter(
@@ -234,7 +268,20 @@ def update_renewal_status(
     db.commit()
     db.refresh(renewal)
 
+    ActivityLogger.log(
+        db=db,
+        action="UPDATE_RENEWAL",
+        description=f"Renewal #{renewal.id} status changed from {current} to {new}",
+        user=current_user,
+        entity_type="Renewal",
+        entity_id=renewal.id,
+        contract_id=renewal.contract_id,
+        request=request,
+        metadata={"from_status": current, "to_status": new},
+    )
+
     return renewal
+
 
 # ---------------- COMPLETE RENEWAL ----------------
 
@@ -244,7 +291,8 @@ def update_renewal_status(
 )
 def complete_renewal(
     renewal_id: int,
-    current_user=Depends(get_current_user),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager", "Contract Manager")),
     db: Session = Depends(get_db)
 ):
     renewal = db.query(Renewal).filter(
@@ -275,4 +323,55 @@ def complete_renewal(
     db.commit()
     db.refresh(renewal)
 
+    contract_title = contract.title if contract else f"Contract #{renewal.contract_id}"
+    ActivityLogger.log(
+        db=db,
+        action="RENEW_CONTRACT",
+        description=f"Completed contract renewal for '{contract_title}', extending expiry to {renewal.new_expiry_date}",
+        user=current_user,
+        entity_type="Renewal",
+        entity_id=renewal.id,
+        contract_id=renewal.contract_id,
+        request=request,
+        metadata={"new_expiry_date": str(renewal.new_expiry_date)},
+    )
+
     return renewal
+
+
+# ---------------- DELETE RENEWAL ----------------
+
+@router.delete(
+    "/{renewal_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_renewal(
+    renewal_id: int,
+    request: Request,
+    current_user=Depends(require_role("Admin")),
+    db: Session = Depends(get_db)
+):
+    renewal = db.query(Renewal).filter(
+        Renewal.id == renewal_id
+    ).first()
+
+    if not renewal:
+        raise HTTPException(
+            status_code=404,
+            detail="Renewal not found"
+        )
+
+    cid = renewal.contract_id
+    db.delete(renewal)
+    db.commit()
+
+    ActivityLogger.log(
+        db=db,
+        action="DELETE_RENEWAL",
+        description=f"Deleted renewal #{renewal_id} on contract #{cid}",
+        user=current_user,
+        entity_type="Renewal",
+        entity_id=renewal_id,
+        contract_id=cid,
+        request=request,
+    )

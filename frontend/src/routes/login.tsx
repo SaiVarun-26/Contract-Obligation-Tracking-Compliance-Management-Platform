@@ -58,9 +58,14 @@ function LoginPage() {
       setStatus("success");
       navigate({ to: "/", replace: true });
     } catch (caught: unknown) {
+      const isNetworkError =
+        (caught as { code?: string })?.code === "ERR_NETWORK" ||
+        (caught as { message?: string })?.message === "Network Error";
       const detail =
         (caught as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        "We couldn't sign you in. Check your credentials and try again.";
+        (isNetworkError
+          ? "Cannot connect to the backend server. Please verify FastAPI is running and CORS allows this origin."
+          : "We couldn't sign you in. Check your credentials and try again.");
       setError(detail);
       setStatus("idle");
     }
