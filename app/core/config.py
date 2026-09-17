@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "sqlite:///./fallback.db"
+        "sqlite://"
     )
     SECRET_KEY: str = os.getenv(
         "SECRET_KEY",

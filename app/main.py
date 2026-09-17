@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 # Ensure root directory is always in sys.path for serverless runtime environments
@@ -44,6 +44,20 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def normalize_vercel_path(request: Request, call_next):
+    # Vercel rewrites to /api/index.py pass /api/index.py or /api/index in request.scope['path']
+    raw_path = request.scope.get("path", "")
+    for prefix in ("/api/index.py", "/api/index"):
+        if raw_path.startswith(prefix):
+            stripped = raw_path[len(prefix):]
+            request.scope["path"] = stripped if (not stripped or stripped.startswith("/")) else ("/" + stripped)
+            if not request.scope["path"]:
+                request.scope["path"] = "/"
+            break
+    return await call_next(request)
+
+
 @app.on_event("startup")
 def startup_event():
     try:
@@ -75,6 +89,7 @@ for r in routers:
 
 
 @app.get("/")
+@app.get("/health")
 def root():
     return {
         "status": "healthy",

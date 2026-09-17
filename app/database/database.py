@@ -5,7 +5,7 @@ from app.core.config import settings
 
 
 def get_database_url() -> str:
-    url = settings.DATABASE_URL or "sqlite:///./fallback.db"
+    url = settings.DATABASE_URL or "sqlite://"
     # Normalize postgres:// to postgresql:// for SQLAlchemy 1.4+ / 2.0+ compatibility
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
