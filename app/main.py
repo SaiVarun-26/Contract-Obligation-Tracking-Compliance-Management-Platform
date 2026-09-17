@@ -1,6 +1,14 @@
+import sys
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Ensure root directory is always in sys.path for serverless runtime environments
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from app.core.config import settings
 from app.database.database import test_database_connection
 
 from app.api.user_api import router as user_router
@@ -24,23 +32,12 @@ app = FastAPI(
 # -----------------------------
 # CORS
 # -----------------------------
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "http://localhost:8081",
-    "http://127.0.0.1:8081",
-    "http://localhost:8082",
-    "http://127.0.0.1:8082",
-]
+configured_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origins=configured_origins if configured_origins else ["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|([a-zA-Z0-9-]+\.)*vercel\.app)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,27 +46,49 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
-    test_database_connection()
+    try:
+        test_database_connection()
+    except Exception as e:
+        print("Startup warning: Database connection check failed:", e)
 
 
 # -----------------------------
-# Routers
+# Routers (Registered both directly and under /api for full compatibility)
 # -----------------------------
-app.include_router(user_router)
-app.include_router(contract_router)
-app.include_router(obligation_router)
-app.include_router(renewal_router)
-app.include_router(notification_router)
-app.include_router(report_router)
-app.include_router(audit_log_router)
-app.include_router(activity_router)
-app.include_router(auth_router)
-app.include_router(compliance_router)
-app.include_router(dashboard_router)
+routers = [
+    user_router,
+    contract_router,
+    obligation_router,
+    renewal_router,
+    notification_router,
+    report_router,
+    audit_log_router,
+    activity_router,
+    auth_router,
+    compliance_router,
+    dashboard_router,
+]
+
+for r in routers:
+    app.include_router(r)
+    app.include_router(r, prefix="/api")
 
 
 @app.get("/")
 def root():
     return {
+        "status": "healthy",
+        "service": "ContractIQ API",
+        "version": "1.0.0",
         "message": "ContractIQ Backend is running successfully."
+    }
+
+
+@app.get("/api")
+@app.get("/api/health")
+def api_health():
+    return {
+        "status": "healthy",
+        "service": "ContractIQ API",
+        "version": "1.0.0"
     }

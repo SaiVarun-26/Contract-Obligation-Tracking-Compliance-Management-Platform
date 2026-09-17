@@ -5,5 +5,10 @@ __pycache__/
 *.pyc
 
 .env
-
+.env*
+.env.local
+!.env.example
+!frontend/.env.example
+!frontend/.env.production
 .vscode/
+.vercel/

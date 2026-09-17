@@ -1,11 +1,19 @@
 import axios from "axios";
 
-// An empty base URL sends requests to Vite/TanStack Start instead of FastAPI.
-// Override this for deployed environments with VITE_API_BASE_URL.
-const API_BASE_URL = (import.meta.env["VITE_API_BASE_URL"] || "http://localhost:8000").replace(
-  /\/$/,
-  "",
-);
+function getApiBaseUrl(): string {
+  const envUrl = import.meta.env["VITE_API_BASE_URL"];
+  if (envUrl && envUrl.trim() !== "") {
+    return envUrl.trim().replace(/\/$/, "");
+  }
+  // In production, never fallback to localhost:8000
+  if (import.meta.env.PROD) {
+    return "/api";
+  }
+  // Default for local development
+  return "http://localhost:8000";
+}
+
+const API_BASE_URL = getApiBaseUrl();
 const TOKEN_KEY = "contractiq_access_token";
 
 let onUnauthorized: (() => void) | null = null;
