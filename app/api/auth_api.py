@@ -1,13 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
 from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
+from app.core.role_checker import normalize_role
 from app.database.database import get_db
 from app.models.user import User
 from app.schemas.auth_schema import Token
-from app.utils.security import verify_password, create_access_token
+from app.services.activity_logger import ActivityLogger
+from app.utils.security import create_access_token, verify_password
 
 router = APIRouter(
     prefix="/auth",
@@ -17,10 +20,10 @@ router = APIRouter(
 
 @router.post("/login", response_model=Token)
 def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-
     # OAuth2 calls this field username, but ContractIQ authenticates by email.
     email = form_data.username.strip().lower()
     user = db.query(User).filter(func.lower(User.email) == email).first()
@@ -37,7 +40,6 @@ def login(
     try:
         password_matches = verify_password(form_data.password, user.password)
     except (ValueError, TypeError):
-        # A malformed or legacy non-bcrypt database value is never a valid login.
         password_matches = False
 
     if not password_matches:
@@ -49,15 +51,50 @@ def login(
     user.last_login = datetime.now(timezone.utc)
     db.commit()
 
+    normalized_role = normalize_role(user.role)
     access_token = create_access_token(
         data={
             "sub": user.email,
-            "role": user.role,
-            "user_id": user.id
+            "email": user.email,
+            "role": normalized_role,
+            "user_id": user.id,
         }
+    )
+
+    # Automatically record USER_LOGIN activity
+    ActivityLogger.log(
+        db=db,
+        action="USER_LOGIN",
+        description=f"User {user.email} logged in successfully",
+        user=user,
+        entity_type="User",
+        entity_id=user.id,
+        request=request,
+        metadata={"email": user.email, "role": normalized_role},
     )
 
     return {
         "access_token": access_token,
         "token_type": "bearer"
     }
+
+
+@router.post("/logout")
+def logout(
+    request: Request,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Log user logout event and confirm session invalidation.
+    """
+    ActivityLogger.log(
+        db=db,
+        action="USER_LOGOUT",
+        description=f"User {current_user.email} logged out",
+        user=current_user,
+        entity_type="User",
+        entity_id=current_user.id,
+        request=request,
+    )
+    return {"detail": "Successfully logged out"}

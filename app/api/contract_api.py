@@ -1,22 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
+from app.core.role_checker import normalize_role, require_any_role, require_role
 from app.database.database import get_db
-from app.models.contract import Contract
 from app.models.activity import Activity
+from app.models.contract import Contract
 from app.models.notification import Notification
 from app.models.obligation import Obligation
 from app.models.renewal import Renewal
 from app.schemas.contract_schema import (
+    ContractAssignment,
     ContractCreate,
     ContractResponse,
-    ContractUpdate,
     ContractStatusUpdate,
-    ContractAssignment
+    ContractUpdate,
 )
-from app.core.auth import get_current_user
-from datetime import datetime
-from app.core.role_checker import RoleChecker
+from app.services.activity_logger import ActivityLogger
 
 router = APIRouter(
     prefix="/contracts",
@@ -31,7 +34,8 @@ router = APIRouter(
 )
 def create_contract(
     contract_data: ContractCreate,
-    current_user=Depends(get_current_user),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager", "Contract Manager")),
     db: Session = Depends(get_db)
 ):
     # Check duplicate contract number
@@ -62,6 +66,24 @@ def create_contract(
     db.commit()
     db.refresh(contract)
 
+    # Automatically record activity
+    ActivityLogger.log(
+        db=db,
+        action="CREATE_CONTRACT",
+        description=f"Created contract '{contract.title}' ({contract.contract_number})",
+        user=current_user,
+        entity_type="Contract",
+        entity_id=contract.id,
+        contract_id=contract.id,
+        request=request,
+        metadata={
+            "contract_number": contract.contract_number,
+            "category": contract.category,
+            "department": contract.department,
+            "status": contract.status,
+        },
+    )
+
     return contract
 
 
@@ -76,6 +98,7 @@ def get_contracts(
 ):
     contracts = db.query(Contract).all()
     return contracts
+
 
 @router.get(
     "/{contract_id}",
@@ -107,6 +130,7 @@ def get_contract(
 def update_contract(
     contract_id: int,
     contract_data: ContractUpdate,
+    request: Request,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -118,6 +142,18 @@ def update_contract(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Contract not found"
+        )
+
+    user_role = normalize_role(current_user.role)
+    is_privileged = user_role in ["Admin", "Legal Manager"]
+    is_owner_or_assignee = (user_role == "Contract Manager") and (
+        contract.created_by == current_user.id or contract.assigned_to == current_user.id
+    )
+
+    if not (is_privileged or is_owner_or_assignee):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to perform this action."
         )
 
     if "contract_number" in contract_data.model_fields_set:
@@ -136,27 +172,61 @@ def update_contract(
     db.commit()
     db.refresh(contract)
 
+    # Automatically record activity
+    ActivityLogger.log(
+        db=db,
+        action="UPDATE_CONTRACT",
+        description=f"Updated contract '{contract.title}' ({contract.contract_number})",
+        user=current_user,
+        entity_type="Contract",
+        entity_id=contract.id,
+        contract_id=contract.id,
+        request=request,
+        metadata={"updated_fields": list(update_data.keys())},
+    )
+
     return contract
 
 
 @router.delete("/{contract_id}", status_code=status.HTTP_200_OK)
 def delete_contract(
     contract_id: int,
-    current_user=Depends(RoleChecker(["Administrator", "Legal Manager"])),
+    request: Request,
+    current_user=Depends(require_role("Admin")),
     db: Session = Depends(get_db),
 ):
     contract = db.query(Contract).filter(Contract.id == contract_id).first()
     if not contract:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
 
-    db.query(Activity).filter(Activity.contract_id == contract_id).delete(synchronize_session=False)
+    contract_title = contract.title
+    contract_num = contract.contract_number
+
+    # Unlink activity records so historical audit remains intact
+    db.query(Activity).filter(Activity.contract_id == contract_id).update(
+        {Activity.contract_id: None}, synchronize_session=False
+    )
     db.query(Notification).filter(Notification.contract_id == contract_id).delete(synchronize_session=False)
     db.query(Obligation).filter(Obligation.contract_id == contract_id).delete(synchronize_session=False)
     db.query(Renewal).filter(Renewal.contract_id == contract_id).delete(synchronize_session=False)
     db.delete(contract)
     db.commit()
 
+    # Automatically record activity
+    ActivityLogger.log(
+        db=db,
+        action="DELETE_CONTRACT",
+        description=f"Deleted contract '{contract_title}' ({contract_num})",
+        user=current_user,
+        entity_type="Contract",
+        entity_id=contract_id,
+        contract_id=None,
+        request=request,
+        metadata={"title": contract_title, "contract_number": contract_num},
+    )
+
     return {"message": "Contract deleted successfully"}
+
 
 @router.patch(
     "/{contract_id}/status",
@@ -165,7 +235,8 @@ def delete_contract(
 def change_status(
     contract_id: int,
     status_data: ContractStatusUpdate,
-    current_user=Depends(RoleChecker(["Administrator", "Legal Manager"])),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager")),
     db: Session = Depends(get_db)
 ):
     contract = db.query(Contract).filter(
@@ -194,18 +265,31 @@ def change_status(
             detail="Invalid status transition"
         )
 
+    prev_status = contract.status
     contract.status = status_data.status
 
     if status_data.status == "Under Review":
         contract.reviewed_at = datetime.utcnow()
-
     elif status_data.status == "Approved":
         contract.approved_at = datetime.utcnow()
 
     db.commit()
     db.refresh(contract)
 
+    ActivityLogger.log(
+        db=db,
+        action="STATUS_CHANGE",
+        description=f"Transitioned contract '{contract.title}' status from {prev_status} to {contract.status}",
+        user=current_user,
+        entity_type="Contract",
+        entity_id=contract.id,
+        contract_id=contract.id,
+        request=request,
+        metadata={"from_status": prev_status, "to_status": contract.status},
+    )
+
     return contract
+
 
 @router.post(
     "/{contract_id}/submit-review",
@@ -213,6 +297,7 @@ def change_status(
 )
 def submit_review(
     contract_id: int,
+    request: Request,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -223,10 +308,19 @@ def submit_review(
     if not contract:
         raise HTTPException(404, "Contract not found")
 
+    user_role = normalize_role(current_user.role)
+    if user_role not in ["Admin", "Legal Manager", "Contract Manager"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to perform this action."
+        )
+
     if contract.status != "Draft":
         raise HTTPException(400, "Only Draft contracts can be submitted")
 
-    if contract.created_by != current_user.id and contract.assigned_to != current_user.id:
+    is_privileged = user_role in ["Admin", "Legal Manager"]
+    is_owner_or_assignee = contract.created_by == current_user.id or contract.assigned_to == current_user.id
+    if not (is_privileged or is_owner_or_assignee):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the contract owner or assignee can submit it for review"
@@ -238,7 +332,19 @@ def submit_review(
     db.commit()
     db.refresh(contract)
 
+    ActivityLogger.log(
+        db=db,
+        action="SUBMIT_REVIEW",
+        description=f"Submitted contract '{contract.title}' for review",
+        user=current_user,
+        entity_type="Contract",
+        entity_id=contract.id,
+        contract_id=contract.id,
+        request=request,
+    )
+
     return contract
+
 
 @router.post(
     "/{contract_id}/approve",
@@ -246,7 +352,8 @@ def submit_review(
 )
 def approve_contract(
     contract_id: int,
-    current_user=Depends(RoleChecker(["Administrator", "Legal Manager"])),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager")),
     db: Session = Depends(get_db)
 ):
     contract = db.query(Contract).filter(
@@ -265,7 +372,19 @@ def approve_contract(
     db.commit()
     db.refresh(contract)
 
+    ActivityLogger.log(
+        db=db,
+        action="APPROVE_CONTRACT",
+        description=f"Approved contract '{contract.title}' ({contract.contract_number})",
+        user=current_user,
+        entity_type="Contract",
+        entity_id=contract.id,
+        contract_id=contract.id,
+        request=request,
+    )
+
     return contract
+
 
 @router.post(
     "/{contract_id}/activate",
@@ -273,7 +392,8 @@ def approve_contract(
 )
 def activate_contract(
     contract_id: int,
-    current_user=Depends(RoleChecker(["Administrator", "Legal Manager"])),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager")),
     db: Session = Depends(get_db)
 ):
     contract = db.query(Contract).filter(
@@ -291,7 +411,19 @@ def activate_contract(
     db.commit()
     db.refresh(contract)
 
+    ActivityLogger.log(
+        db=db,
+        action="ACTIVATE_CONTRACT",
+        description=f"Activated contract '{contract.title}' ({contract.contract_number})",
+        user=current_user,
+        entity_type="Contract",
+        entity_id=contract.id,
+        contract_id=contract.id,
+        request=request,
+    )
+
     return contract
+
 
 @router.patch(
     "/{contract_id}/assign",
@@ -300,7 +432,8 @@ def activate_contract(
 def assign_contract(
     contract_id: int,
     assignment: ContractAssignment,
-    current_user=Depends(RoleChecker(["Administrator", "Legal Manager"])),
+    request: Request,
+    current_user=Depends(require_any_role("Admin", "Legal Manager")),
     db: Session = Depends(get_db)
 ):
     contract = db.query(Contract).filter(
@@ -315,6 +448,16 @@ def assign_contract(
     db.commit()
     db.refresh(contract)
 
+    ActivityLogger.log(
+        db=db,
+        action="ASSIGN_CONTRACT",
+        description=f"Assigned contract '{contract.title}' to user #{assignment.assigned_to}",
+        user=current_user,
+        entity_type="Contract",
+        entity_id=contract.id,
+        contract_id=contract.id,
+        request=request,
+        metadata={"assigned_to": assignment.assigned_to},
+    )
+
     return contract
-
-

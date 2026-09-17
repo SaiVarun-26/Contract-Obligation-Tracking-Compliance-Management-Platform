@@ -23,7 +23,10 @@ import {
   users,
 } from "@/lib/api/resources";
 import { apiErrorMessage } from "@/lib/api/errors";
-import type { Contract, User } from "@/lib/api/types";
+import type { Contract, User, UserAssignee } from "@/lib/api/types";
+import { useAuth } from "@/lib/auth/auth-context";
+import { RoleGuard } from "@/components/auth/role-guard";
+import { canDeleteContract, canEditContract } from "@/lib/auth/permissions";
 
 export const Route = createFileRoute("/contracts")({ component: ContractsPage });
 
@@ -51,8 +54,9 @@ function ContractsPage() {
   });
   const [detailId, setDetailId] = useState<number | null>(null);
   const [openInEditMode, setOpenInEditMode] = useState(false);
+  const { user } = useAuth();
   const contractQuery = useQuery({ queryKey: ["contracts"], queryFn: contracts.list });
-  const usersQuery = useQuery({ queryKey: ["users"], queryFn: users.list });
+  const usersQuery = useQuery({ queryKey: ["users", "assignees"], queryFn: users.assignees });
   const complianceQuery = useQuery({ queryKey: ["compliance"], queryFn: compliance.list });
   const categories = [...new Set((contractQuery.data ?? []).map((item) => item.category))];
   const departments = [
@@ -179,8 +183,9 @@ function ContractsPage() {
           />
         </label>
       </header>
-      <section className="rounded-lg bg-card p-5 shadow-hairline">
-        <h2 className="mb-4 font-display text-sm font-semibold">Create Contract</h2>
+      <RoleGuard permission="contracts:create">
+        <section className="rounded-lg bg-card p-5 shadow-hairline">
+          <h2 className="mb-4 font-display text-sm font-semibold">Create Contract</h2>
         <form className="grid gap-4 md:grid-cols-4" onSubmit={submit}>
           <CreateField
             label="Title"
@@ -241,6 +246,7 @@ function ContractsPage() {
           </div>
         </form>
       </section>
+      </RoleGuard>
       <section className="grid gap-6 lg:grid-cols-[220px_1fr]">
         <aside className="rounded-lg border border-border bg-card p-4 shadow-hairline">
           <div className="mb-4 flex items-center gap-2 text-sm font-semibold">
@@ -350,30 +356,34 @@ function ContractsPage() {
                         <Button
                           size="icon"
                           variant="ghost"
-                          title="View"
-                          aria-label="View contract"
-                          onClick={() => openDetails(item.id)}
+                          title="View details"
+                          aria-label="View contract details"
+                          onClick={() => openDetails(item.id, false)}
                         >
                           <Eye className="size-4" />
                         </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Edit"
-                          aria-label="Edit contract"
-                          onClick={() => openDetails(item.id, true)}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Delete"
-                          aria-label="Delete contract"
-                          onClick={() => removeContract(item)}
-                        >
-                          <Trash2 className="size-4 text-destructive" />
-                        </Button>
+                        {canEditContract(user, item) ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Edit"
+                            aria-label="Edit contract"
+                            onClick={() => openDetails(item.id, true)}
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                        ) : null}
+                        {canDeleteContract(user) ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Delete"
+                            aria-label="Delete contract"
+                            onClick={() => removeContract(item)}
+                          >
+                            <Trash2 className="size-4 text-destructive" />
+                          </Button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -414,11 +424,12 @@ function ContractDetailsDialog({
   contractId: number | null;
   open: boolean;
   initialEdit: boolean;
-  users: User[];
+  users: (User | UserAssignee)[];
   onClose: () => void;
   onUpdated: () => Promise<void>;
   onDeleted: () => Promise<void>;
 }) {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const contract = useQuery({
     queryKey: ["contract", contractId],
@@ -623,14 +634,18 @@ function ContractDetailsDialog({
               <Button variant="ghost" onClick={onClose}>
                 Close
               </Button>
-              <Button variant="outline" onClick={remove}>
-                <Trash2 className="mr-2 size-4 text-destructive" />
-                Delete Contract
-              </Button>
-              <Button onClick={() => setEditMode(true)}>
-                <Pencil className="mr-2 size-4" />
-                Edit Contract
-              </Button>
+              {canDeleteContract(user) ? (
+                <Button variant="outline" onClick={remove}>
+                  <Trash2 className="mr-2 size-4 text-destructive" />
+                  Delete Contract
+                </Button>
+              ) : null}
+              {canEditContract(user, item) ? (
+                <Button onClick={() => setEditMode(true)}>
+                  <Pencil className="mr-2 size-4" />
+                  Edit Contract
+                </Button>
+              ) : null}
             </DialogFooter>
           </div>
         )}

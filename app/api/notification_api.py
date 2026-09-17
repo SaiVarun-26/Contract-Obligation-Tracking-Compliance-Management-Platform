@@ -15,6 +15,7 @@ from app.schemas.notification_schema import (
     NotificationResponse,
 )
 from app.core.auth import get_current_user
+from app.core.role_checker import normalize_role
 
 
 router = APIRouter(
@@ -86,7 +87,9 @@ def get_notifications(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return db.query(Notification).all()
+    if normalize_role(current_user.role) == "Admin":
+        return db.query(Notification).all()
+    return db.query(Notification).filter(Notification.user_id == current_user.id).all()
 
 
 # ---------------- GET ONE ----------------
@@ -108,6 +111,12 @@ def get_notification(
         raise HTTPException(
             status_code=404,
             detail="Notification not found",
+        )
+
+    if normalize_role(current_user.role) != "Admin" and notification.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to perform this action.",
         )
 
     return notification
@@ -167,6 +176,12 @@ def mark_as_read(
             detail="Notification not found",
         )
 
+    if normalize_role(current_user.role) != "Admin" and notification.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to perform this action.",
+        )
+
     notification.status = "Read"
     notification.read_at = datetime.utcnow()
 
@@ -195,6 +210,12 @@ def delete_notification(
         raise HTTPException(
             status_code=404,
             detail="Notification not found",
+        )
+
+    if normalize_role(current_user.role) != "Admin" and notification.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to perform this action.",
         )
 
     db.delete(notification)

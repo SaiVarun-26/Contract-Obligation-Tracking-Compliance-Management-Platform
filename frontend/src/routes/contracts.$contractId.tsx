@@ -10,18 +10,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { activities, compliance, contracts, obligations, renewals, users } from "@/lib/api/resources";
 import { apiErrorMessage } from "@/lib/api/errors";
+import { useAuth } from "@/lib/auth/auth-context";
+import { canApproveContract, canEditContract, hasPermission } from "@/lib/auth/permissions";
 import type { Contract } from "@/lib/api/types";
 
 export const Route = createFileRoute("/contracts/$contractId")({ component: ContractDetails });
 
 function ContractDetails() {
   const id = Number(Route.useParams().contractId);
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [addingObligation, setAddingObligation] = useState(false);
   const contract = useQuery({ queryKey: ["contracts", id], queryFn: () => contracts.get(id), enabled: id > 0 });
-  const usersQuery = useQuery({ queryKey: ["users"], queryFn: users.list });
+  const usersQuery = useQuery({ queryKey: ["users", "assignees"], queryFn: users.assignees });
   const obligationList = useQuery({ queryKey: ["obligations", "contract", id], queryFn: () => obligations.forContract(id), enabled: contract.isSuccess });
   const renewalList = useQuery({ queryKey: ["renewals", "contract", id], queryFn: () => renewals.forContract(id), enabled: contract.isSuccess });
   const complianceResult = useQuery({ queryKey: ["compliance", "contract", id], queryFn: () => compliance.byContract(id), enabled: contract.isSuccess });
@@ -30,7 +33,7 @@ function ContractDetails() {
   if (contract.isLoading) return <main className="mx-auto max-w-7xl px-5 py-8 text-sm text-muted-foreground">Loading contract…</main>;
   if (contract.isError || !contract.data) return <main className="mx-auto max-w-7xl px-5 py-8 text-sm text-destructive">{apiErrorMessage(contract.error, "Unable to load this contract.")}</main>;
   const item = contract.data;
-  const manager = usersQuery.data?.find((user) => user.id === item.assigned_to);
+  const manager = usersQuery.data?.find((u) => u.id === item.assigned_to);
   const save = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setSaving(true);
     const form = new FormData(event.currentTarget);
@@ -45,13 +48,34 @@ function ContractDetails() {
   const completeObligation = async (obligationId: number) => {
     try { await obligations.status(obligationId, "Completed"); await queryClient.invalidateQueries({ queryKey: ["obligations", "contract", id] }); await queryClient.invalidateQueries({ queryKey: ["obligations"] }); await queryClient.invalidateQueries({ queryKey: ["dashboard"] }); toast.success("Obligation completed"); } catch (error) { toast.error(error instanceof Error ? error.message : "Unable to complete obligation."); }
   };
-  const validActions: Record<string, { label: string; next: string; icon: typeof Send }[]> = { Draft: [{ label: "Submit review", next: "Under Review", icon: Send }], "Under Review": [{ label: "Approve", next: "Approved", icon: ShieldCheck }], Approved: [{ label: "Activate", next: "Active", icon: Play }], Active: [{ label: "Terminate", next: "Terminated", icon: Archive }], Terminated: [{ label: "Archive", next: "Archived", icon: Archive }] };
 
-  return <main className="mx-auto w-full max-w-7xl space-y-6 px-5 py-8 lg:px-8"><header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex items-start gap-4"><span className="grid size-10 place-items-center rounded-md bg-jade/10 text-jade"><FileText className="size-5" /></span><div><p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Contract {item.contract_number}</p><h1 className="font-display text-2xl font-semibold">{item.title}</h1><p className="mt-1 text-sm text-muted-foreground">{item.status} · {item.category}{item.department ? ` · ${item.department}` : ""}</p></div></div><div className="flex flex-wrap gap-2">{(validActions[item.status] ?? []).map((action) => <Button key={action.next} size="sm" variant={action.next === "Approved" ? "approve" : "outline"} onClick={() => transition(action.next)}><action.icon className="mr-2 size-4" />{action.label}</Button>)}<Button size="sm" variant="outline" onClick={() => setEditing((value) => !value)}><Pencil className="mr-2 size-4" />{editing ? "Cancel" : "Edit"}</Button></div></header>
+  const isAssignedOrCreator = Boolean(user && (user.id === item.created_by || user.id === item.assigned_to));
+  const canSubmit = isAssignedOrCreator || hasPermission(user?.role, "contracts:approve");
+  const canApprove = canApproveContract(user);
+  const canActivate = hasPermission(user?.role, "contracts:activate");
+  const canChangeStatus = hasPermission(user?.role, "contracts:status");
+
+  const validActions: Record<string, { label: string; next: string; icon: typeof Send; allowed: boolean }[]> = {
+    Draft: [{ label: "Submit review", next: "Under Review", icon: Send, allowed: canSubmit }],
+    "Under Review": [{ label: "Approve", next: "Approved", icon: ShieldCheck, allowed: canApprove }],
+    Approved: [{ label: "Activate", next: "Active", icon: Play, allowed: canActivate }],
+    Active: [{ label: "Terminate", next: "Terminated", icon: Archive, allowed: canChangeStatus }],
+    Terminated: [{ label: "Archive", next: "Archived", icon: Archive, allowed: canChangeStatus }]
+  };
+
+  const visibleActions = (validActions[item.status] ?? []).filter((a) => a.allowed);
+  const canEdit = canEditContract(user, item);
+  const canCreateObligation = hasPermission(user?.role, "obligations:create");
+  const canCompleteObligationCheck = (assignedTo?: number | null) => {
+    if (hasPermission(user?.role, "obligations:status")) return true;
+    return Boolean(user && assignedTo === user.id);
+  };
+
+  return <main className="mx-auto w-full max-w-7xl space-y-6 px-5 py-8 lg:px-8"><header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex items-start gap-4"><span className="grid size-10 place-items-center rounded-md bg-jade/10 text-jade"><FileText className="size-5" /></span><div><p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Contract {item.contract_number}</p><h1 className="font-display text-2xl font-semibold">{item.title}</h1><p className="mt-1 text-sm text-muted-foreground">{item.status} · {item.category}{item.department ? ` · ${item.department}` : ""}</p></div></div><div className="flex flex-wrap gap-2">{visibleActions.map((action) => <Button key={action.next} size="sm" variant={action.next === "Approved" ? "approve" : "outline"} onClick={() => transition(action.next)}><action.icon className="mr-2 size-4" />{action.label}</Button>)}{canEdit ? <Button size="sm" variant="outline" onClick={() => setEditing((value) => !value)}><Pencil className="mr-2 size-4" />{editing ? "Cancel" : "Edit"}</Button> : null}</div></header>
     {editing ? <EditForm contract={item} users={usersQuery.data ?? []} saving={saving} onSubmit={save} /> : null}
     <Tabs defaultValue="overview" className="space-y-5"><TabsList className="flex h-auto flex-wrap justify-start gap-1 bg-secondary p-1"><TabsTrigger value="overview">Overview</TabsTrigger><TabsTrigger value="obligations">Obligations</TabsTrigger><TabsTrigger value="renewals">Renewals</TabsTrigger><TabsTrigger value="compliance">Compliance</TabsTrigger><TabsTrigger value="activity">Activity</TabsTrigger></TabsList>
       <TabsContent value="overview"><Panel title="Overview"><dl className="grid gap-5 text-sm sm:grid-cols-2 lg:grid-cols-3"><Detail label="Title" value={item.title} /><Detail label="Category" value={item.category} /><Detail label="Department" value={item.department || "Unassigned"} /><Detail label="Assigned manager" value={manager?.full_name || "Unassigned"} /><Detail label="Start date" value={item.start_date} /><Detail label="End date" value={item.end_date} /><Detail label="Description" value={item.description} /></dl></Panel></TabsContent>
-      <TabsContent value="obligations"><Panel title="Obligations"><div className="mb-4 flex justify-end"><Button size="sm" onClick={() => setAddingObligation((value) => !value)}><Plus className="mr-2 size-4" />Add obligation</Button></div>{addingObligation ? <QuickObligationForm contractId={id} users={usersQuery.data ?? []} onSaved={async () => { setAddingObligation(false); await queryClient.invalidateQueries({ queryKey: ["obligations", "contract", id] }); await queryClient.invalidateQueries({ queryKey: ["obligations"] }); await queryClient.invalidateQueries({ queryKey: ["dashboard"] }); toast.success("Obligation created"); }} /> : null}{obligationList.isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : obligationList.data?.length ? <ul className="space-y-3">{obligationList.data.map((entry) => <li key={entry.id} className="flex items-center justify-between gap-3 border-b border-border/60 pb-3 last:border-0"><div><p className="font-medium">{entry.title}</p><p className="text-xs text-muted-foreground">Due {entry.due_date} · Assigned {usersQuery.data?.find((user) => user.id === entry.assigned_to)?.full_name ?? "Unassigned"} · {entry.priority ?? "Medium"}</p></div>{entry.status !== "Completed" ? <Button size="sm" variant="approve" onClick={() => completeObligation(entry.id)}><Check className="mr-2 size-4" />Complete</Button> : <span className="text-xs text-jade">Completed</span>}</li>)}</ul> : <Empty text="No obligations found." />}</Panel></TabsContent>
+      <TabsContent value="obligations"><Panel title="Obligations">{canCreateObligation ? <div className="mb-4 flex justify-end"><Button size="sm" onClick={() => setAddingObligation((value) => !value)}><Plus className="mr-2 size-4" />Add obligation</Button></div> : null}{addingObligation && canCreateObligation ? <QuickObligationForm contractId={id} users={usersQuery.data ?? []} onSaved={async () => { setAddingObligation(false); await queryClient.invalidateQueries({ queryKey: ["obligations", "contract", id] }); await queryClient.invalidateQueries({ queryKey: ["obligations"] }); await queryClient.invalidateQueries({ queryKey: ["dashboard"] }); toast.success("Obligation created"); }} /> : null}{obligationList.isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : obligationList.data?.length ? <ul className="space-y-3">{obligationList.data.map((entry) => <li key={entry.id} className="flex items-center justify-between gap-3 border-b border-border/60 pb-3 last:border-0"><div><p className="font-medium">{entry.title}</p><p className="text-xs text-muted-foreground">Due {entry.due_date} · Assigned {usersQuery.data?.find((u) => u.id === entry.assigned_to)?.full_name ?? "Unassigned"} · {entry.priority ?? "Medium"}</p></div>{entry.status !== "Completed" ? (canCompleteObligationCheck(entry.assigned_to) ? <Button size="sm" variant="approve" onClick={() => completeObligation(entry.id)}><Check className="mr-2 size-4" />Complete</Button> : <span className="text-xs text-amber-500">Pending</span>) : <span className="text-xs text-jade">Completed</span>}</li>)}</ul> : <Empty text="No obligations found." />}</Panel></TabsContent>
       <TabsContent value="renewals"><ListPanel title="Renewals" items={(renewalList.data ?? []).map((entry) => `${entry.renewal_date} → ${entry.new_expiry_date} · ${entry.status}`)} loading={renewalList.isLoading} /></TabsContent>
       <TabsContent value="compliance"><Panel title="Compliance">{complianceResult.data ? <dl className="grid gap-5 text-sm sm:grid-cols-3"><Detail label="Status" value={complianceResult.data.status} /><Detail label="Risk level" value={complianceResult.data.risk_level} /><Detail label="Score" value={String(complianceResult.data.compliance_score)} /></dl> : <Empty text="No compliance record found." />}</Panel></TabsContent>
       <TabsContent value="activity"><ListPanel title="Activity history" items={(activityList.data ?? []).map((entry) => entry.activity)} loading={activityList.isLoading} /></TabsContent>

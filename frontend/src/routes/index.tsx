@@ -4,10 +4,14 @@ import { AlertTriangle, CalendarDays, CircleCheck, FilePlus2, ShieldAlert, Users
 import { dashboardApi } from "@/lib/api/dashboard";
 import { activities, compliance, contracts, notifications, obligations, renewals as renewalApi, users } from "@/lib/api/resources";
 import { apiErrorMessage } from "@/lib/api/errors";
+import { useAuth } from "@/lib/auth/auth-context";
+import { hasPermission } from "@/lib/auth/permissions";
 
 export const Route = createFileRoute("/")({ component: Index });
 
 function Index() {
+  const { user } = useAuth();
+  const canManageUsers = hasPermission(user?.role, "users:manage");
   const summary = useQuery({ queryKey: ["dashboard", "summary"], queryFn: dashboardApi.summary });
   const renewals = useQuery({
     queryKey: ["dashboard", "upcoming-renewals"],
@@ -24,11 +28,11 @@ function Index() {
   const obligationList = useQuery({ queryKey: ["obligations"], queryFn: obligations.list });
   const renewalList = useQuery({ queryKey: ["renewals"], queryFn: renewalApi.list });
   const contractList = useQuery({ queryKey: ["contracts"], queryFn: contracts.list });
-  const userList = useQuery({ queryKey: ["users"], queryFn: users.list });
+  const userList = useQuery({ queryKey: ["users"], queryFn: users.list, enabled: canManageUsers });
   const activityList = useQuery({ queryKey: ["activities"], queryFn: activities.list });
   const complianceList = useQuery({ queryKey: ["compliance", "high-risk"], queryFn: compliance.highRisk });
   const notificationList = useQuery({ queryKey: ["notifications"], queryFn: notifications.list });
-  const failed = [
+  const queriesToCheck = [
     summary,
     renewals,
     contractStatus,
@@ -38,9 +42,10 @@ function Index() {
     notificationList,
     renewalList,
     contractList,
-    userList,
     activityList,
-  ].find((query) => query.isError);
+    ...(canManageUsers ? [userList] : []),
+  ];
+  const failed = queriesToCheck.find((query) => query.isError);
   const overdue = (obligationList.data ?? []).filter((item) => item.status === "Overdue");
   const unread = (notificationList.data ?? []).filter((item) => item.status !== "Read");
   return (
@@ -60,8 +65,8 @@ function Index() {
           {apiErrorMessage(failed.error, "Unable to load dashboard data.")}
         </p>
       ) : null}
-      <QuickActions />
-      <AdminStats users={userList.data?.length ?? 0} contracts={contractList.data?.length ?? 0} renewals={renewalList.data?.length ?? 0} compliance={complianceList.data?.length ?? 0} activities={activityList.data?.length ?? 0} notifications={notificationList.data?.length ?? 0} />
+      <QuickActions role={user?.role} />
+      <AdminStats users={canManageUsers ? (userList.data?.length ?? 0) : null} contracts={contractList.data?.length ?? 0} renewals={renewalList.data?.length ?? 0} compliance={complianceList.data?.length ?? 0} activities={activityList.data?.length ?? 0} notifications={notificationList.data?.length ?? 0} />
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
         <div className="space-y-6 xl:col-span-8">
           <RecentContracts items={contractList.data ?? []} />
@@ -157,8 +162,68 @@ function Index() {
   );
 }
 
-function QuickActions() { const actions = [{ label: "Contract", to: "/contracts", icon: FilePlus2 }, { label: "User", to: "/users", icon: UsersRound }, { label: "Obligation", to: "/obligations", icon: FilePlus2 }, { label: "Renewal", to: "/renewals", icon: CalendarDays }, { label: "Report", to: "/reports", icon: FilePlus2 }]; return <section className="mb-6 rounded-lg bg-card p-4 shadow-hairline"><div className="flex flex-wrap items-center gap-2"><span className="mr-2 text-sm font-semibold">Quick actions</span>{actions.map((action) => <Link key={action.label} to={action.to} className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm transition-colors hover:border-jade hover:text-jade"><action.icon className="size-4" />+ {action.label}</Link>)}</div></section>; }
-function AdminStats({ users, contracts, renewals, compliance, activities, notifications }: Record<string, number>) { return <section className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-border shadow-hairline sm:grid-cols-3 lg:grid-cols-6">{[["Users", users], ["Contracts", contracts], ["Renewals", renewals], ["Compliance", compliance], ["Activities", activities], ["Notifications", notifications]].map(([label, value]) => <div key={label} className="bg-card p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 font-display text-2xl font-semibold text-jade">{value}</p></div>)}</section>; }
+function QuickActions({ role }: { role?: string }) {
+  const actions: { label: string; to: string; icon: typeof FilePlus2; permission: Parameters<typeof hasPermission>[1] }[] = [
+    { label: "Contract", to: "/contracts", icon: FilePlus2, permission: "contracts:create" },
+    { label: "User", to: "/users", icon: UsersRound, permission: "users:manage" },
+    { label: "Obligation", to: "/obligations", icon: FilePlus2, permission: "obligations:create" },
+    { label: "Renewal", to: "/renewals", icon: CalendarDays, permission: "renewals:create" },
+    { label: "Report", to: "/reports", icon: FilePlus2, permission: "reports:view" },
+  ];
+  const allowed = actions.filter((a) => hasPermission(role, a.permission));
+  if (allowed.length === 0) return null;
+  return (
+    <section className="mb-6 rounded-lg bg-card p-4 shadow-hairline">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-2 text-sm font-semibold">Quick actions</span>
+        {allowed.map((action) => (
+          <Link
+            key={action.label}
+            to={action.to}
+            className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm transition-colors hover:border-jade hover:text-jade"
+          >
+            <action.icon className="size-4" />+ {action.label}
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdminStats({
+  users,
+  contracts,
+  renewals,
+  compliance,
+  activities,
+  notifications,
+}: {
+  users: number | null;
+  contracts: number;
+  renewals: number;
+  compliance: number;
+  activities: number;
+  notifications: number;
+}) {
+  const statList: [string, number][] = [
+    ...(users !== null ? [["Users", users] as [string, number]] : []),
+    ["Contracts", contracts],
+    ["Renewals", renewals],
+    ["Compliance", compliance],
+    ["Activities", activities],
+    ["Notifications", notifications],
+  ];
+  return (
+    <section className={`mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-border shadow-hairline sm:grid-cols-3 lg:grid-cols-${statList.length}`}>
+      {statList.map(([label, value]) => (
+        <div key={label} className="bg-card p-4">
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className="mt-1 font-display text-2xl font-semibold text-jade">{value}</p>
+        </div>
+      ))}
+    </section>
+  );
+}
 function RecentContracts({ items }: { items: Array<{ id: number; title: string; status: string; updated_at: string }> }) { const recent = [...items].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5); return <Panel title="Recent contracts" count="Latest edited"><div className="divide-y divide-border/60">{recent.map((item) => <Link key={item.id} to="/contracts/$contractId" params={{ contractId: String(item.id) }}><Row title={item.title} detail={item.status} value={item.updated_at ? new Date(item.updated_at).toLocaleDateString() : "—"} /></Link>)}{!recent.length ? <Empty show text="No contracts yet." /> : null}</div></Panel>; }
 
 function CalendarPanel({

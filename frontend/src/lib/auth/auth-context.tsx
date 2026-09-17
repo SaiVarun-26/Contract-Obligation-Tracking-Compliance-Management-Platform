@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   clearAccessToken,
   readAccessToken,
@@ -14,8 +15,9 @@ import {
   storeAccessToken,
 } from "@/lib/api/client";
 import { loginRequest } from "./auth-api";
+import { normalizeRole, type Role } from "./permissions";
 
-type AuthUser = { email: string; id?: number; role?: string };
+export type AuthUser = { email: string; id?: number; role?: Role };
 
 type AuthContextValue = {
   token: string | null;
@@ -31,19 +33,23 @@ const USER_KEY = "contractiq_user_email";
 
 function userFromToken(token: string): AuthUser | null {
   try {
-    const payload = JSON.parse(
-      atob(token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/")),
-    ) as {
+    const rawBase64 = token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/");
+    const paddedBase64 = rawBase64.padEnd(
+      rawBase64.length + ((4 - (rawBase64.length % 4)) % 4),
+      "=",
+    );
+    const payload = JSON.parse(atob(paddedBase64)) as {
       sub?: string;
       user_id?: number;
       role?: string;
       exp?: number;
     };
     if (!payload.sub || (payload.exp && payload.exp * 1000 <= Date.now())) return null;
+    const role = payload.role ? normalizeRole(payload.role) : undefined;
     return {
       email: payload.sub,
       ...(payload.user_id !== undefined ? { id: payload.user_id } : {}),
-      ...(payload.role !== undefined ? { role: payload.role } : {}),
+      ...(role !== undefined ? { role } : {}),
     };
   } catch {
     return null;
@@ -51,9 +57,19 @@ function userFromToken(token: string): AuthUser | null {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+
+  const signOut = useCallback(() => {
+    clearAccessToken();
+    sessionStorage.removeItem(USER_KEY);
+    localStorage.removeItem(USER_KEY);
+    queryClient.clear();
+    setToken(null);
+    setUser(null);
+  }, [queryClient]);
 
   useEffect(() => {
     const existing = readAccessToken();
@@ -71,23 +87,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      clearAccessToken();
-      sessionStorage.removeItem(USER_KEY);
-      localStorage.removeItem(USER_KEY);
-      setToken(null);
-      setUser(null);
+      signOut();
       window.location.assign("/login?expired=1");
     });
     return () => setUnauthorizedHandler(() => undefined);
-  }, []);
+  }, [signOut]);
 
-  const signOut = useCallback(() => {
-    clearAccessToken();
-    sessionStorage.removeItem(USER_KEY);
-    localStorage.removeItem(USER_KEY);
-    setToken(null);
-    setUser(null);
-  }, []);
+  // Proactive token expiration monitor
+  useEffect(() => {
+    if (!token) return;
+    const checkTokenValidity = () => {
+      const activeUser = userFromToken(token);
+      if (!activeUser) {
+        signOut();
+        window.location.assign("/login?expired=1");
+      }
+    };
+
+    const interval = setInterval(checkTokenValidity, 15000);
+    window.addEventListener("focus", checkTokenValidity);
+    document.addEventListener("visibilitychange", checkTokenValidity);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", checkTokenValidity);
+      document.removeEventListener("visibilitychange", checkTokenValidity);
+    };
+  }, [token, signOut]);
 
   const signIn = useCallback(
     async ({

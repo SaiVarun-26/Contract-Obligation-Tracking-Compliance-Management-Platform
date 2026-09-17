@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.models.audit_log import AuditLog
 from app.schemas.audit_log_schema import AuditLogCreate, AuditLogResponse
+from app.core.role_checker import RoleChecker
 
+AUDIT_ROLES = ["Admin", "Legal Manager", "Compliance Officer"]
 
 router = APIRouter(
     prefix="/audit-logs",
@@ -19,7 +21,8 @@ router = APIRouter(
 )
 def create_audit_log(
     audit_data: AuditLogCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(RoleChecker(AUDIT_ROLES)),
 ):
     audit_log = AuditLog(
         user_id=audit_data.user_id,
@@ -40,7 +43,8 @@ def create_audit_log(
     response_model=list[AuditLogResponse]
 )
 def get_audit_logs(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(RoleChecker(AUDIT_ROLES)),
 ):
     return db.query(AuditLog).all()
 
@@ -51,7 +55,8 @@ def get_audit_logs(
 )
 def get_audit_log(
     audit_log_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(RoleChecker(AUDIT_ROLES)),
 ):
     audit_log = db.query(AuditLog).filter(
         AuditLog.id == audit_log_id
