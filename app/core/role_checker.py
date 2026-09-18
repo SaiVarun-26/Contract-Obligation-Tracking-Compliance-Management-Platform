@@ -17,11 +17,15 @@ ROLE_ALIASES = {
     "administrator": "Admin",
     "legal": "Legal Manager",
     "legal manager": "Legal Manager",
+    "legal_manager": "Legal Manager",
     "compliance": "Compliance Officer",
     "compliance officer": "Compliance Officer",
+    "compliance_officer": "Compliance Officer",
     "procurement": "Contract Manager",
     "procurement officer": "Contract Manager",
+    "procurement_officer": "Contract Manager",
     "contract manager": "Contract Manager",
+    "contract_manager": "Contract Manager",
     "viewer": "Viewer",
     "employee": "Viewer",
     "department head": "Viewer",
@@ -32,7 +36,8 @@ def normalize_role(role: str | None) -> str:
     if not role:
         return ""
     cleaned = role.strip().lower()
-    return ROLE_ALIASES.get(cleaned, role.strip())
+    normalized_cleaned = cleaned.replace("_", " ")
+    return ROLE_ALIASES.get(cleaned, ROLE_ALIASES.get(normalized_cleaned, role.strip()))
 
 
 class RoleChecker:

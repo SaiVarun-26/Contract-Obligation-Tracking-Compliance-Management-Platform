@@ -5,18 +5,20 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from app.core.config import settings
-from app.database.database import Base
+from app.database.database import Base, get_database_url
 import app.models
 
 
 config = context.config
 
 
-# Use DATABASE_URL from .env
+# Use normalized DATABASE_URL from app.database.database
+# This handles postgres:// -> postgresql:// normalization for Render/Neon
 # The replace is needed because your encoded password contains %
+db_url = get_database_url()
 config.set_main_option(
     "sqlalchemy.url",
-    settings.DATABASE_URL.replace("%", "%%")
+    db_url.replace("%", "%%")
 )
 
 

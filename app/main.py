@@ -62,6 +62,23 @@ async def normalize_vercel_path(request: Request, call_next):
 def startup_event():
     try:
         test_database_connection()
+        # Automatically run pending Alembic migrations on startup (e.g. for Render deployments)
+        try:
+            from alembic import command
+            from alembic.config import Config
+            alembic_cfg = Config(str(ROOT_DIR / "alembic.ini"))
+            alembic_cfg.set_main_option("script_location", str(ROOT_DIR / "alembic"))
+            command.upgrade(alembic_cfg, "head")
+            print("Database migrations verified and up to date.")
+        except Exception as mig_err:
+            print("Alembic migration notice on startup:", mig_err)
+
+        # Ensure demo accounts exist and are up to date
+        try:
+            from scripts.seed_roles_and_users import seed
+            seed()
+        except Exception as seed_err:
+            print("Demo seed notice on startup:", seed_err)
     except Exception as e:
         print("Startup warning: Database connection check failed:", e)
 

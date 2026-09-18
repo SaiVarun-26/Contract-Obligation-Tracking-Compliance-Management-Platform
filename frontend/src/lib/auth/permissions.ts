@@ -39,11 +39,15 @@ const ROLE_ALIASES: Record<string, Role> = {
   administrator: "Admin",
   legal: "Legal Manager",
   "legal manager": "Legal Manager",
+  legal_manager: "Legal Manager",
   "contract manager": "Contract Manager",
+  contract_manager: "Contract Manager",
   procurement: "Contract Manager",
   "procurement officer": "Contract Manager",
+  procurement_officer: "Contract Manager",
   compliance: "Compliance Officer",
   "compliance officer": "Compliance Officer",
+  compliance_officer: "Compliance Officer",
   viewer: "Viewer",
   employee: "Viewer",
   "department head": "Viewer",
@@ -52,7 +56,8 @@ const ROLE_ALIASES: Record<string, Role> = {
 export function normalizeRole(role?: string | null): Role {
   if (!role) return "Viewer";
   const cleaned = role.trim().toLowerCase();
-  return ROLE_ALIASES[cleaned] ?? (role as Role);
+  const normalizedCleaned = cleaned.replace(/_/g, " ");
+  return ROLE_ALIASES[cleaned] ?? ROLE_ALIASES[normalizedCleaned] ?? (role as Role);
 }
 
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
