@@ -1,16 +1,16 @@
 import axios from "axios";
 
 function getApiBaseUrl(): string {
-  const envUrl = import.meta.env["VITE_API_BASE_URL"];
+  const envUrl =
+    import.meta.env.VITE_API_URL ||
+    import.meta.env.VITE_API_BASE_URL;
+
   if (envUrl && envUrl.trim() !== "") {
     return envUrl.trim().replace(/\/$/, "");
   }
-  // In production, never fallback to localhost:8000
-  if (import.meta.env.PROD) {
-    return "/api";
-  }
-  // Default for local development
-  return "http://localhost:8000";
+
+  // Default to deployed Render backend URL
+  return "https://contract-obligation-tracking-compliance.onrender.com";
 }
 
 const API_BASE_URL = getApiBaseUrl();
